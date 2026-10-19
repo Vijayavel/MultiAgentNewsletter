@@ -1,0 +1,19 @@
+# ---- Secrets: never commit. Locally they live in .env; GitHub Actions reads repository secrets. ----
+# Every .env variant (.env, .env.backup, .env.local, ...) except the placeholder template.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---- Personal data: your sent newsletters (CI keeps this in the Actions cache) ----
+newsletter_history.json
+.history-*.json
+preview*.html
+*.log
+
+# ---- Local tooling ----
+.venv/
+__pycache__/
+.pytest_cache/
+.DS_Store

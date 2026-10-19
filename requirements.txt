@@ -1,0 +1,5 @@
+openai
+certifi
+python-dotenv
+requests
+markdown

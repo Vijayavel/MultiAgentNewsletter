@@ -1,0 +1,89 @@
+name: Daily AI newsletter
+
+on:
+  schedule:
+    # GitHub cron is always UTC, so schedule both candidates for 5:00 AM Pacific
+    # and let the gate step below keep the one that matches today's offset.
+    - cron: "0 12 * * *" # 5:00 AM PDT (Mar-Nov)
+    - cron: "0 13 * * *" # 5:00 AM PST (Nov-Mar)
+  workflow_dispatch: # "Run workflow" button for manual test runs
+
+concurrency:
+  group: daily-newsletter
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Decide by which cron fired, not the wall clock, so a late-starting run still sends.
+      - name: Check this is the 5 AM Pacific run
+        id: gate
+        env:
+          FIRED: ${{ github.event.schedule }}
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then go=true
+          elif [ "$(TZ=America/Los_Angeles date +%Z)" = "PDT" ]; then
+            [ "$FIRED" = "0 12 * * *" ] && go=true || go=false
+          else
+            [ "$FIRED" = "0 13 * * *" ] && go=true || go=false
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+          echo "Pacific time now: $(TZ=America/Los_Angeles date) -> send: $go"
+
+      - if: steps.gate.outputs.go == 'true'
+        uses: actions/checkout@v4
+
+      - if: steps.gate.outputs.go == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - if: steps.gate.outputs.go == 'true'
+        run: pip install -r requirements.txt
+
+      # Each run starts from a fresh checkout, so carry the sent-email history between runs
+      # in the Actions cache (latest saved copy wins). It drives the 12-hour gap and repeat checks.
+      - name: Restore sent-email history
+        if: steps.gate.outputs.go == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: newsletter_history.json
+          key: newsletter-history-${{ github.run_id }}
+          restore-keys: newsletter-history-
+
+      - name: Write and send newsletter
+        if: steps.gate.outputs.go == 'true'
+        env:
+          # Writer agents, review agent, and news search
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+          SEARCH_PROVIDER: serper
+          NEWSLETTER_TO: ${{ secrets.NEWSLETTER_TO }}
+          # Gmail delivery. Addresses are secrets too: GitHub masks them in public run logs.
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_PROVIDER: smtp
+          EMAIL_FROM: ${{ secrets.GMAIL_ADDRESS }}
+          EMAIL_FROM_NAME: Content Agent
+          SMTP_HOST: smtp.gmail.com
+          SMTP_PORT: "587"
+          SMTP_USER: ${{ secrets.GMAIL_ADDRESS }}
+          EMAIL_ALLOWED_RECIPIENTS: ${{ secrets.NEWSLETTER_TO }}
+          EMAIL_MAX_PER_RUN: "1"
+          # No one is at the keyboard in CI to answer the approval prompt.
+          EMAIL_REQUIRE_APPROVAL: "false"
+          EMAIL_DRY_RUN: "false"
+        run: python agent.py
+
+      - name: Save sent-email history
+        if: always() && steps.gate.outputs.go == 'true' && hashFiles('newsletter_history.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: newsletter_history.json
+          key: newsletter-history-${{ github.run_id }}
